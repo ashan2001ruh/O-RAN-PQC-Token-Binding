@@ -1,0 +1,99 @@
+# Keycloak acting as the XRF (OAuth 2.0 authorization server), rendered from config/testbed.env.
+# mTLS terminates in Keycloak itself, so the client certificate reaches the X.509
+# client authenticator and the certificate-bound token logic directly.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${KEYCLOAK_SERVICE}
+  namespace: ${RICSEC_NAMESPACE}
+  labels: {app: ${KEYCLOAK_SERVICE}, part-of: xapp-token-binding}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: ${KEYCLOAK_SERVICE}}
+  template:
+    metadata:
+      labels: {app: ${KEYCLOAK_SERVICE}, part-of: xapp-token-binding}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: keycloak
+          image: ${KEYCLOAK_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args:
+            - start
+            # The realm is loaded by build/import-realm.sh through the admin REST API
+            # (idempotent, and errors are reported instead of silently stopping the server).
+            # mTLS: 'request' (not 'required') during development, so a missing or
+            # untrusted certificate surfaces as a diagnosable OAuth error instead of a
+            # failed handshake.
+            - --https-client-auth=request
+            - --truststore-paths=/etc/ric-trust/ric-intermediate-ca.crt
+            - --https-protocols=TLSv1.3
+            - --https-certificate-file=/etc/x509/https/tls.crt
+            - --https-certificate-key-file=/etc/x509/https/tls.key
+            - --https-port=${KEYCLOAK_PORT}
+            - --http-enabled=false
+            - --hostname=${KEYCLOAK_URL}
+            - --health-enabled=true
+            - --db=dev-file
+            - --cache=local   # single-node testbed: no JGroups cluster
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom: {secretKeyRef: {name: keycloak-admin, key: username}}
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: {secretKeyRef: {name: keycloak-admin, key: password}}
+            - {name: JAVA_OPTS_KC_HEAP, value: "${KEYCLOAK_HEAP}"}
+          ports:
+            - {name: https, containerPort: ${KEYCLOAK_PORT}}
+            - {name: management, containerPort: 9000}
+          volumeMounts:
+            - {name: tls, mountPath: /etc/x509/https, readOnly: true}
+            - {name: trust, mountPath: /etc/ric-trust, readOnly: true}
+            - {name: data, mountPath: /opt/keycloak/data/h2}
+          # Generous timeouts: on a small lab VM the JVM can stall for seconds under load,
+          # and the 1s default makes the kubelet kill a healthy Keycloak.
+          startupProbe:
+            httpGet: {path: /health/ready, port: management, scheme: HTTPS}
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 90
+          readinessProbe:
+            httpGet: {path: /health/ready, port: management, scheme: HTTPS}
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 4
+          livenessProbe:
+            httpGet: {path: /health/live, port: management, scheme: HTTPS}
+            periodSeconds: 30
+            timeoutSeconds: 15
+            failureThreshold: 10
+          resources:
+            requests: {cpu: 250m, memory: 600Mi}
+            limits: {memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+      volumes:
+        - name: tls
+          secret: {secretName: keycloak-tls}
+        - name: trust
+          configMap: {name: ric-trust}
+        - name: data   # survives container restarts; `make restart-keycloak` re-imports on a new pod
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${KEYCLOAK_SERVICE}
+  namespace: ${RICSEC_NAMESPACE}
+  labels: {app: ${KEYCLOAK_SERVICE}, part-of: xapp-token-binding}
+spec:
+  selector: {app: ${KEYCLOAK_SERVICE}}
+  ports:
+    - {name: https, port: ${KEYCLOAK_PORT}, targetPort: https}

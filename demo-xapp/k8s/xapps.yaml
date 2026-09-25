@@ -1,0 +1,161 @@
+# Two demo xApps in ricxapp, rendered from config/testbed.env.
+#   ${XAPP_A_NAME}: Method ${XAPP_A_METHOD} (client ${XAPP_A_CLIENT_ID}, certificate lifetime ${LONGTERM_CERT_LIFETIME})
+#   ${XAPP_B_NAME}: Method ${XAPP_B_METHOD} (client ${XAPP_B_CLIENT_ID}, certificate lifetime ${EPHEMERAL_CERT_LIFETIME})
+# Each calls the other's protected API every ${PEER_INTERVAL}.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: xapp-token-binding
+  namespace: ${XAPP_NAMESPACE}
+  labels: {part-of: xapp-token-binding}
+data:
+  KEYCLOAK_TOKEN_URL: "${TOKEN_ISSUER}/protocol/openid-connect/token"
+  # The validator trusts whichever issuer is active for this deployment: Keycloak in
+  # classical mode, the pq-shim in post-quantum mode (see RESOURCE_* in the Makefile).
+  INTROSPECTION_URL: "${RESOURCE_INTROSPECTION_URL}"
+  JWKS_URL: "${RESOURCE_JWKS_URL}"
+  TOKEN_ISSUER: "${RESOURCE_TOKEN_ISSUER}"
+  TOKEN_AUDIENCE: "${TOKEN_AUDIENCE}"
+  TOKEN_SCOPE: "${TOKEN_SCOPE}"
+  REQUIRED_SCOPE: "${TOKEN_SCOPE}"
+  REQUIRED_ROLE: "${REQUIRED_ROLE}"
+  RIC_CA_URL: "${RIC_CA_URL}"
+  RIC_TRUST_BUNDLE: "/etc/ric-trust/ric-intermediate-ca.crt,/etc/ric-trust/ric-intermediate-ca-pq.crt"
+  BOOTSTRAP_CERT: /etc/xapp/bootstrap/tls.crt
+  BOOTSTRAP_KEY: /etc/xapp/bootstrap/tls.key
+  IDENTITY_DIR: /var/run/xapp/identity
+  PQ_MODE: "${PQ_MODE}"
+  PQ_ISSUER: "${PQ_ISSUER}"
+  PQ_SHIM_URL: "${PQ_SHIM_URL}"
+  PQ_IDENTITY_KEY_ALG: "${PQ_IDENTITY_KEY_ALG}"
+  PQ_DPOP_ALG: "${PQ_DPOP_ALG}"
+  PQ_KEX_ONLY: "${PQ_KEX_ONLY}"
+  PQ_BOOTSTRAP_CERT: /etc/xapp/bootstrap-pq/tls.crt
+  PQ_BOOTSTRAP_KEY: /etc/xapp/bootstrap-pq/tls.key
+  PQ_IDENTITY_DIR: /var/run/xapp/identity-pq
+  LISTEN_ADDR: ":${XAPP_PORT}"
+  PEER_INTERVAL: "${PEER_INTERVAL}"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${XAPP_A_NAME}
+  namespace: ${XAPP_NAMESPACE}
+  labels: {app: ${XAPP_A_NAME}, part-of: xapp-token-binding}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}   # one-time bootstrap credential: old and new pods must never overlap
+  selector:
+    matchLabels: {app: ${XAPP_A_NAME}}
+  template:
+    metadata:
+      labels: {app: ${XAPP_A_NAME}, part-of: xapp-token-binding}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: xapp
+          image: ricsec/xapp:${IMAGE_TAG}
+          imagePullPolicy: Never
+          envFrom: [{configMapRef: {name: xapp-token-binding}}]
+          env:
+            - {name: XAPP_NAME, value: "${XAPP_A_NAME}"}
+            - {name: XAPP_METHOD, value: "${XAPP_A_METHOD}"}
+            - {name: XAPP_CLIENT_ID, value: "${XAPP_A_CLIENT_ID}"}
+            - {name: CERT_LIFETIME, value: "${LONGTERM_CERT_LIFETIME}"}
+            - {name: SERVER_DNS_NAMES, value: "${XAPP_A_NAME}.${XAPP_NAMESPACE}.svc.${CLUSTER_DOMAIN},${XAPP_A_NAME}.${XAPP_NAMESPACE}.svc"}
+            - {name: PEER_URL, value: "https://${XAPP_B_NAME}.${XAPP_NAMESPACE}.svc.${CLUSTER_DOMAIN}:${XAPP_PORT}/api/v1/sdl/demo-key"}
+          ports:
+            - {name: https, containerPort: ${XAPP_PORT}}
+            - {name: health, containerPort: 8081}
+          readinessProbe:
+            httpGet: {path: /healthz, port: health, scheme: HTTP}
+            periodSeconds: 10
+            timeoutSeconds: 5
+          volumeMounts:
+            - {name: bootstrap, mountPath: /etc/xapp/bootstrap, readOnly: true}
+            - {name: bootstrap-pq, mountPath: /etc/xapp/bootstrap-pq, readOnly: true}
+            - {name: trust, mountPath: /etc/ric-trust, readOnly: true}
+            - {name: identity, mountPath: /var/run/xapp/identity}
+            - {name: identity-pq, mountPath: /var/run/xapp/identity-pq}
+          resources:
+            requests: {cpu: 20m, memory: 24Mi}
+            limits: {memory: 96Mi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - {name: bootstrap, secret: {secretName: "${XAPP_A_NAME}-bootstrap", defaultMode: 0440}}
+        - {name: bootstrap-pq, secret: {secretName: "${XAPP_A_NAME}-bootstrap-pq", defaultMode: 0440}}
+        - {name: trust, configMap: {name: ric-trust}}
+        - {name: identity, emptyDir: {medium: Memory}}
+        - {name: identity-pq, emptyDir: {medium: Memory}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${XAPP_A_NAME}
+  namespace: ${XAPP_NAMESPACE}
+  labels: {app: ${XAPP_A_NAME}, part-of: xapp-token-binding}
+spec:
+  selector: {app: ${XAPP_A_NAME}}
+  ports: [{name: https, port: ${XAPP_PORT}, targetPort: https}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${XAPP_B_NAME}
+  namespace: ${XAPP_NAMESPACE}
+  labels: {app: ${XAPP_B_NAME}, part-of: xapp-token-binding}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}   # one-time bootstrap credential: old and new pods must never overlap
+  selector:
+    matchLabels: {app: ${XAPP_B_NAME}}
+  template:
+    metadata:
+      labels: {app: ${XAPP_B_NAME}, part-of: xapp-token-binding}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: xapp
+          image: ricsec/xapp:${IMAGE_TAG}
+          imagePullPolicy: Never
+          envFrom: [{configMapRef: {name: xapp-token-binding}}]
+          env:
+            - {name: XAPP_NAME, value: "${XAPP_B_NAME}"}
+            - {name: XAPP_METHOD, value: "${XAPP_B_METHOD}"}
+            - {name: XAPP_CLIENT_ID, value: "${XAPP_B_CLIENT_ID}"}
+            - {name: CERT_LIFETIME, value: "${EPHEMERAL_CERT_LIFETIME}"}
+            - {name: SERVER_DNS_NAMES, value: "${XAPP_B_NAME}.${XAPP_NAMESPACE}.svc.${CLUSTER_DOMAIN},${XAPP_B_NAME}.${XAPP_NAMESPACE}.svc"}
+            - {name: PEER_URL, value: "https://${XAPP_A_NAME}.${XAPP_NAMESPACE}.svc.${CLUSTER_DOMAIN}:${XAPP_PORT}/api/v1/sdl/demo-key"}
+          ports:
+            - {name: https, containerPort: ${XAPP_PORT}}
+            - {name: health, containerPort: 8081}
+          readinessProbe:
+            httpGet: {path: /healthz, port: health, scheme: HTTP}
+            periodSeconds: 10
+            timeoutSeconds: 5
+          volumeMounts:
+            - {name: bootstrap, mountPath: /etc/xapp/bootstrap, readOnly: true}
+            - {name: bootstrap-pq, mountPath: /etc/xapp/bootstrap-pq, readOnly: true}
+            - {name: trust, mountPath: /etc/ric-trust, readOnly: true}
+            - {name: identity, mountPath: /var/run/xapp/identity}
+            - {name: identity-pq, mountPath: /var/run/xapp/identity-pq}
+          resources:
+            requests: {cpu: 20m, memory: 24Mi}
+            limits: {memory: 96Mi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - {name: bootstrap, secret: {secretName: "${XAPP_B_NAME}-bootstrap", defaultMode: 0440}}
+        - {name: bootstrap-pq, secret: {secretName: "${XAPP_B_NAME}-bootstrap-pq", defaultMode: 0440}}
+        - {name: trust, configMap: {name: ric-trust}}
+        - {name: identity, emptyDir: {medium: Memory}}
+        - {name: identity-pq, emptyDir: {medium: Memory}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${XAPP_B_NAME}
+  namespace: ${XAPP_NAMESPACE}
+  labels: {app: ${XAPP_B_NAME}, part-of: xapp-token-binding}
+spec:
+  selector: {app: ${XAPP_B_NAME}}
+  ports: [{name: https, port: ${XAPP_PORT}, targetPort: https}]

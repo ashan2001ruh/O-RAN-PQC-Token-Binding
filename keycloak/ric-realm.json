@@ -1,0 +1,221 @@
+{
+  "realm": "${KEYCLOAK_REALM}",
+  "displayName": "O-RAN Near-RT RIC xApp Authorization (XRF)",
+  "enabled": true,
+  "sslRequired": "all",
+  "accessTokenLifespan": ${ACCESS_TOKEN_LIFESPAN},
+  "roles": {
+    "realm": [
+      {
+        "name": "${REQUIRED_ROLE}",
+        "description": "Permission to call the SDL-backed resource APIs exposed by xApps"
+      }
+    ]
+  },
+  "clientScopes": [
+    {
+      "name": "${TOKEN_SCOPE}",
+      "description": "Access to xApp SDL resources; adds the resource audience and realm roles to access tokens",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-${TOKEN_AUDIENCE}",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "${TOKEN_AUDIENCE}",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "client-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "client_id",
+            "claim.name": "client_id",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "${XAPP_A_CLIENT_ID}",
+      "name": "Method A - RFC 8705 certificate-bound, long-term identity key",
+      "description": "Identical configuration to ${XAPP_B_CLIENT_ID}; only the certificate lifetime differs (client side).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "client-x509",
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["${TOKEN_SCOPE}"],
+      "optionalClientScopes": [],
+      "attributes": {
+        "x509.subjectdn": "CN=${XAPP_A_CLIENT_ID},OU=${XAPP_OU},O=${ORG}",
+        "x509.allow.regex.pattern.comparison": "false",
+        "tls.client.certificate.bound.access.tokens": "true",
+        "dpop.bound.access.tokens": "false"
+      }
+    },
+    {
+      "clientId": "${XAPP_B_CLIENT_ID}",
+      "name": "Method B - RFC 8705 certificate-bound, ephemeral identity key",
+      "description": "Identical configuration to ${XAPP_A_CLIENT_ID}; only the certificate lifetime differs (client side).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "client-x509",
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["${TOKEN_SCOPE}"],
+      "optionalClientScopes": [],
+      "attributes": {
+        "x509.subjectdn": "CN=${XAPP_B_CLIENT_ID},OU=${XAPP_OU},O=${ORG}",
+        "x509.allow.regex.pattern.comparison": "false",
+        "tls.client.certificate.bound.access.tokens": "true",
+        "dpop.bound.access.tokens": "false"
+      }
+    },
+    {
+      "clientId": "${SIDECAR_C_CLIENT_ID}",
+      "name": "Sidecar xApp C - certificate-bound over the post-quantum tunnel",
+      "description": "Onboarded with dms_cli; the sidecar injected by Kyverno holds this identity. The token is bound to the ML-DSA certificate that authenticates the tunnel handshake.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "client-x509",
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["${TOKEN_SCOPE}"],
+      "optionalClientScopes": [],
+      "attributes": {
+        "x509.subjectdn": "CN=${SIDECAR_C_CLIENT_ID},OU=${XAPP_OU},O=${ORG}",
+        "x509.allow.regex.pattern.comparison": "false",
+        "tls.client.certificate.bound.access.tokens": "true",
+        "dpop.bound.access.tokens": "false"
+      }
+    },
+    {
+      "clientId": "${SIDECAR_D_CLIENT_ID}",
+      "name": "Sidecar xApp D - DPoP-bound over the post-quantum tunnel",
+      "description": "Onboarded with dms_cli; the sidecar proves possession of the ML-DSA proof key that cnf.jkt names when it opens a tunnel.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "client-x509",
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["${TOKEN_SCOPE}"],
+      "optionalClientScopes": [],
+      "attributes": {
+        "x509.subjectdn": "CN=${SIDECAR_D_CLIENT_ID},OU=${XAPP_OU},O=${ORG}",
+        "x509.allow.regex.pattern.comparison": "false",
+        "tls.client.certificate.bound.access.tokens": "false",
+        "dpop.bound.access.tokens": "true"
+      }
+    },
+    {
+      "clientId": "xapp-dpop",
+      "name": "Method C - RFC 9449 DPoP-bound",
+      "description": "Client authentication over mTLS; the access token is bound to the client's DPoP JWK (cnf.jkt).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "client-x509",
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["${TOKEN_SCOPE}"],
+      "optionalClientScopes": [],
+      "attributes": {
+        "x509.subjectdn": "CN=xapp-dpop,OU=${XAPP_OU},O=${ORG}",
+        "x509.allow.regex.pattern.comparison": "false",
+        "tls.client.certificate.bound.access.tokens": "false",
+        "dpop.bound.access.tokens": "true"
+      }
+    },
+    {
+      "clientId": "xapp-unbound-probe",
+      "name": "Test only - issues plain bearer tokens (no cnf)",
+      "description": "Exists solely so the test suite can prove the resource validator rejects tokens without a confirmation claim.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "client-x509",
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["${TOKEN_SCOPE}"],
+      "optionalClientScopes": [],
+      "attributes": {
+        "x509.subjectdn": "CN=xapp-unbound-probe,OU=${XAPP_OU},O=${ORG}",
+        "x509.allow.regex.pattern.comparison": "false",
+        "tls.client.certificate.bound.access.tokens": "false",
+        "dpop.bound.access.tokens": "false"
+      }
+    }
+  ],
+  "users": [
+    {"username": "service-account-${XAPP_A_CLIENT_ID}", "enabled": true, "serviceAccountClientId": "${XAPP_A_CLIENT_ID}", "realmRoles": ["${REQUIRED_ROLE}"]},
+    {"username": "service-account-${XAPP_B_CLIENT_ID}", "enabled": true, "serviceAccountClientId": "${XAPP_B_CLIENT_ID}", "realmRoles": ["${REQUIRED_ROLE}"]},
+    {"username": "service-account-${SIDECAR_C_CLIENT_ID}", "enabled": true, "serviceAccountClientId": "${SIDECAR_C_CLIENT_ID}", "realmRoles": ["${REQUIRED_ROLE}"]},
+    {"username": "service-account-${SIDECAR_D_CLIENT_ID}", "enabled": true, "serviceAccountClientId": "${SIDECAR_D_CLIENT_ID}", "realmRoles": ["${REQUIRED_ROLE}"]},
+    {"username": "service-account-xapp-dpop", "enabled": true, "serviceAccountClientId": "xapp-dpop", "realmRoles": ["${REQUIRED_ROLE}"]},
+    {"username": "service-account-xapp-unbound-probe", "enabled": true, "serviceAccountClientId": "xapp-unbound-probe", "realmRoles": ["${REQUIRED_ROLE}"]}
+  ]
+}

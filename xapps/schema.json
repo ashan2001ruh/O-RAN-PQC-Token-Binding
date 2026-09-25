@@ -1,0 +1,9 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "http://o-ran-sc.org/xapp-token-binding-controls.json",
+  "type": "object",
+  "title": "Controls section of the token-binding demo xApps",
+  "description": "These xApps carry no configuration of their own: every security parameter belongs to the sidecar, which Kyverno injects from the pod annotations.",
+  "properties": {},
+  "additionalProperties": false
+}

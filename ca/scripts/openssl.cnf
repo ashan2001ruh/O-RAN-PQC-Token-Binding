@@ -1,0 +1,27 @@
+# Extension profiles for the simulated SMO / RIC PKI (used by gen-pki.sh).
+SAN = DNS:unused
+
+[ req ]
+distinguished_name = dn
+prompt             = no
+
+[ dn ]
+
+[ v3_root ]
+basicConstraints     = critical, CA:TRUE
+keyUsage             = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+
+[ v3_intermediate ]
+basicConstraints       = critical, CA:TRUE, pathlen:0
+keyUsage               = critical, keyCertSign, cRLSign
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid:always
+
+[ v3_server ]
+basicConstraints       = critical, CA:FALSE
+keyUsage               = critical, digitalSignature
+extendedKeyUsage       = serverAuth
+subjectAltName         = ${ENV::SAN}
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid,issuer

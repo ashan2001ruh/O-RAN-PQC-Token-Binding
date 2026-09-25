@@ -1,0 +1,43 @@
+{
+  "name": "${SIDECAR_D_XAPP}",
+  "version": "1.0.0",
+  "annotations": {
+    "pq.oran/inject": "true",
+    "pq.oran/client-id": "${SIDECAR_D_CLIENT_ID}",
+    "pq.oran/method": "${SIDECAR_D_METHOD}",
+    "pq.oran/ingress": "http|127.0.0.1:${SIDECAR_APP_HTTP_PORT},rmr|127.0.0.1:${SIDECAR_APP_RMR_PORT}",
+    "pq.oran/egress": "http|127.0.0.1:${SIDECAR_LOCAL_HTTP_PORT}|${SIDECAR_C_CLIENT_ID}-sidecar.${XAPP_NAMESPACE}.svc.${CLUSTER_DOMAIN}:${SIDECAR_PORT}|${SIDECAR_C_CLIENT_ID},rmr|127.0.0.1:${SIDECAR_LOCAL_RMR_PORT}|${SIDECAR_C_CLIENT_ID}-sidecar.${XAPP_NAMESPACE}.svc.${CLUSTER_DOMAIN}:${SIDECAR_PORT}|${SIDECAR_C_CLIENT_ID}"
+  },
+  "containers": [
+    {
+      "name": "${SIDECAR_D_XAPP}",
+      "image": {
+        "registry": "${LOCAL_REGISTRY}",
+        "name": "${DEMO_APP_IMAGE_NAME}",
+        "tag": "${DEMO_APP_IMAGE_TAG}"
+      },
+      "command": ["/bin/sh"],
+      "args": [
+        "-c",
+        "mkdir -p /tmp/www; echo 'hello from xappd, served over the post-quantum tunnel' > /tmp/www/index.html; httpd -p ${SIDECAR_APP_HTTP_PORT} -h /tmp/www; while true; do nc -l -p ${SIDECAR_APP_RMR_PORT} | sed 's/^/[rmr-in] /'; done & sleep 25; while true; do echo '[http-out] calling the peer xApp through the sidecar'; wget -q -T 25 -O - http://127.0.0.1:${SIDECAR_LOCAL_HTTP_PORT}/ | sed 's/^/[http-in] /'; echo '[rmr-out] sending an RMR message through the sidecar'; echo 'RMR:xappd:hello' | nc -w 10 127.0.0.1 ${SIDECAR_LOCAL_RMR_PORT}; sleep 15; done"
+      ]
+    }
+  ],
+  "messaging": {
+    "ports": [
+      {
+        "name": "http",
+        "container": "${SIDECAR_D_XAPP}",
+        "port": ${SIDECAR_APP_HTTP_PORT},
+        "description": "application HTTP port, reachable only through the sidecar"
+      },
+      {
+        "name": "rmr-data",
+        "container": "${SIDECAR_D_XAPP}",
+        "port": ${SIDECAR_APP_RMR_PORT},
+        "description": "RMR data port, reachable only through the sidecar"
+      }
+    ]
+  },
+  "controls": {}
+}

@@ -1,0 +1,118 @@
+# Kyverno injects the token-binding sidecar into any xApp pod that asks for it with
+# annotations. The xApp image, the xApp source and the xApp descriptor containers
+# section stay untouched; the descriptor only carries the annotations below, which
+# dms_cli passes straight through to the pod template.
+#
+#   pq.oran/inject     "true"
+#   pq.oran/client-id  the OAuth client id, which is also the certificate CN and the
+#                      name of the bootstrap secrets (<id>-bootstrap, <id>-bootstrap-pq)
+#   pq.oran/method     A, B or C
+#   pq.oran/ingress    route|localAddr[,route|localAddr...]
+#   pq.oran/egress     route|listenAddr|peerHost:port|peerName[,...]
+#
+# Everything else - issuer URLs, trust bundle, PQ settings - comes from the
+# xapp-token-binding ConfigMap that already exists in the namespace.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: xapp-token-binding-sidecar
+  labels: {part-of: xapp-token-binding}
+  annotations:
+    policies.kyverno.io/title: xApp token-binding sidecar injection
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Adds the post-quantum token-binding sidecar, its credentials and its trust
+      anchors to annotated xApp pods, so that an unmodified xApp gets
+      sender-constrained authorization on both its HTTP and its RMR traffic.
+spec:
+  background: false
+  rules:
+    - name: inject-token-binding-sidecar
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["${XAPP_NAMESPACE}"]
+              annotations:
+                pq.oran/inject: "true"
+      context:
+        - name: clientID
+          variable:
+            jmesPath: 'request.object.metadata.annotations."pq.oran/client-id"'
+        - name: method
+          variable:
+            jmesPath: 'request.object.metadata.annotations."pq.oran/method" || ''A'''
+        - name: ingressRoutes
+          variable:
+            jmesPath: 'request.object.metadata.annotations."pq.oran/ingress" || '''''
+        - name: egressRoutes
+          variable:
+            jmesPath: 'request.object.metadata.annotations."pq.oran/egress" || '''''
+      preconditions:
+        all:
+          - key: "{{ clientID || '' }}"
+            operator: NotEquals
+            value: ""
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              # The sidecar Service selects on this label, so it works whatever the
+              # onboarding chart happens to call the pod.
+              pq.oran/sidecar: "{{ clientID }}"
+          spec:
+            volumes:
+              - name: pq-bootstrap
+                secret:
+                  secretName: "{{ clientID }}-bootstrap"
+                  defaultMode: 288
+              - name: pq-bootstrap-pq
+                secret:
+                  secretName: "{{ clientID }}-bootstrap-pq"
+                  defaultMode: 288
+              - name: pq-trust
+                configMap:
+                  name: ric-trust
+              - name: pq-identity
+                emptyDir: {medium: Memory}
+              - name: pq-identity-pq
+                emptyDir: {medium: Memory}
+            containers:
+              - name: pq-sidecar
+                image: ${SIDECAR_IMAGE}
+                imagePullPolicy: ${SIDECAR_PULL_POLICY}
+                envFrom:
+                  - configMapRef: {name: xapp-token-binding}
+                env:
+                  - {name: SIDECAR_NAME, value: "{{ clientID }}"}
+                  - {name: XAPP_CLIENT_ID, value: "{{ clientID }}"}
+                  - {name: XAPP_METHOD, value: "{{ method }}"}
+                  - {name: SIDECAR_AUTHORITY, value: "{{ clientID }}-sidecar.${XAPP_NAMESPACE}.svc.${CLUSTER_DOMAIN}:${SIDECAR_PORT}"}
+                  - {name: SIDECAR_INGRESS_LISTEN, value: ":${SIDECAR_PORT}"}
+                  - {name: SIDECAR_INGRESS_ROUTES, value: "{{ ingressRoutes }}"}
+                  - {name: SIDECAR_EGRESS_ROUTES, value: "{{ egressRoutes }}"}
+                  - {name: SIDECAR_HEALTH_LISTEN, value: ":${SIDECAR_HEALTH_PORT}"}
+                ports:
+                  - {name: pq-tunnel, containerPort: ${SIDECAR_PORT}}
+                  - {name: pq-health, containerPort: ${SIDECAR_HEALTH_PORT}}
+                readinessProbe:
+                  httpGet: {path: /healthz, port: pq-health, scheme: HTTP}
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                  timeoutSeconds: 5
+                  failureThreshold: 12
+                volumeMounts:
+                  - {name: pq-bootstrap, mountPath: /etc/xapp/bootstrap, readOnly: true}
+                  - {name: pq-bootstrap-pq, mountPath: /etc/xapp/bootstrap-pq, readOnly: true}
+                  - {name: pq-trust, mountPath: /etc/ric-trust, readOnly: true}
+                  - {name: pq-identity, mountPath: /var/run/xapp/identity}
+                  - {name: pq-identity-pq, mountPath: /var/run/xapp/identity-pq}
+                resources:
+                  requests: {cpu: 20m, memory: 32Mi}
+                  limits: {memory: 128Mi}
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 65532
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities: {drop: [ALL]}

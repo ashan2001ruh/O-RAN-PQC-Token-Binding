@@ -1,0 +1,79 @@
+# Post-quantum token shim: upgrades a classical Keycloak token into an ML-DSA-signed
+# token bound to the caller post-quantum credential. Rendered from config/testbed.env.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${PQ_SHIM_SERVICE}
+  namespace: ${RICSEC_NAMESPACE}
+  labels: {app: ${PQ_SHIM_SERVICE}, part-of: xapp-token-binding}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}   # the signing key is generated per pod
+  selector:
+    matchLabels: {app: ${PQ_SHIM_SERVICE}}
+  template:
+    metadata:
+      labels: {app: ${PQ_SHIM_SERVICE}, part-of: xapp-token-binding}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: pq-shim
+          image: ricsec/pq-shim:${IMAGE_TAG}
+          imagePullPolicy: Never
+          ports:
+            - {name: https, containerPort: ${PQ_SHIM_PORT}}
+            - {name: health, containerPort: 8081}
+          env:
+            - {name: LISTEN_ADDR, value: ":${PQ_SHIM_PORT}"}
+            # Post-quantum server certificate (ML-DSA) and the ML-KEM hybrid group.
+            - {name: SERVER_CERT, value: /etc/pq-shim/server/tls.crt}
+            - {name: SERVER_KEY, value: /etc/pq-shim/server/tls.key}
+            - {name: PQ_KEX_ONLY, value: "${PQ_KEX_ONLY}"}
+            # Identity of the tokens this shim issues.
+            - {name: PQ_ISSUER, value: "${PQ_SHIM_URL}"}
+            - {name: PQ_SIGNING_ALG, value: "${PQ_SIGNING_ALG}"}
+            - {name: PQ_TOKEN_LIFETIME, value: "${PQ_TOKEN_LIFETIME}"}
+            # Trust anchor for the post-quantum certificate chains presented in x5c.
+            - {name: PQ_TRUST_BUNDLE, value: /etc/ric-trust/ric-intermediate-ca-pq.crt}
+            # Embedded validator: checks the incoming classical Keycloak token.
+            - {name: TOKEN_ISSUER, value: "${TOKEN_ISSUER}"}
+            - {name: JWKS_URL, value: "${TOKEN_ISSUER}/protocol/openid-connect/certs"}
+            - {name: TOKEN_AUDIENCE, value: "${TOKEN_AUDIENCE}"}
+            - {name: REQUIRED_SCOPE, value: "${TOKEN_SCOPE}"}
+            - {name: REQUIRED_ROLE, value: "${REQUIRED_ROLE}"}
+            - {name: RIC_TRUST_BUNDLE, value: /etc/ric-trust/ric-intermediate-ca.crt}
+          volumeMounts:
+            - {name: server-tls, mountPath: /etc/pq-shim/server, readOnly: true}
+            - {name: trust, mountPath: /etc/ric-trust, readOnly: true}
+          readinessProbe:
+            httpGet: {path: /healthz, port: health, scheme: HTTP}
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 32Mi}
+            limits: {memory: 192Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      volumes:
+        - name: server-tls
+          secret: {secretName: pq-shim-server-tls, defaultMode: 0440}
+        - name: trust
+          configMap: {name: ric-trust}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${PQ_SHIM_SERVICE}
+  namespace: ${RICSEC_NAMESPACE}
+  labels: {app: ${PQ_SHIM_SERVICE}, part-of: xapp-token-binding}
+spec:
+  selector: {app: ${PQ_SHIM_SERVICE}}
+  ports:
+    - {name: https, port: ${PQ_SHIM_PORT}, targetPort: https}

@@ -1,0 +1,84 @@
+# RIC intermediate CA enrollment service (rendered with envsubst from config/testbed.env).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${RIC_CA_SERVICE}
+  namespace: ${RICSEC_NAMESPACE}
+  labels: {app: ${RIC_CA_SERVICE}, part-of: xapp-token-binding}
+spec:
+  replicas: 1   # the one-time bootstrap ledger is local to the pod
+  selector:
+    matchLabels: {app: ${RIC_CA_SERVICE}}
+  template:
+    metadata:
+      labels: {app: ${RIC_CA_SERVICE}, part-of: xapp-token-binding}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: ric-ca
+          image: ricsec/ric-ca:${IMAGE_TAG}
+          imagePullPolicy: Never
+          ports:
+            - {name: https, containerPort: ${RIC_CA_PORT}}
+          env:
+            - {name: LISTEN_ADDR, value: ":${RIC_CA_PORT}"}
+            - {name: SERVER_CERT, value: /etc/ric-ca/server/tls.crt}
+            - {name: SERVER_KEY, value: /etc/ric-ca/server/tls.key}
+            - {name: ISSUER_CERT, value: /etc/ric-ca/issuer/tls.crt}
+            - {name: ISSUER_KEY, value: /etc/ric-ca/issuer/tls.key}
+            # Post-quantum issuing branch: an ML-DSA CSR is signed by this CA.
+            - {name: ISSUER_CERT_PQ, value: /etc/ric-ca/issuer-pq/tls.crt}
+            - {name: ISSUER_KEY_PQ, value: /etc/ric-ca/issuer-pq/tls.key}
+            - {name: BOOTSTRAP_TRUST_BUNDLE, value: "/etc/ric-trust/smo-onboarding-ca.crt,/etc/ric-trust/smo-onboarding-ca-pq.crt"}
+            - {name: OPERATIONAL_TRUST_BUNDLE, value: "/etc/ric-trust/ric-intermediate-ca.crt,/etc/ric-trust/ric-intermediate-ca-pq.crt"}
+            - {name: PQ_KEX_ONLY, value: "false"}
+            - {name: STATE_DIR, value: /var/lib/ric-ca}
+            - {name: ORG, value: "${ORG}"}
+            - {name: XAPP_OU, value: "${XAPP_OU}"}
+            - {name: CA_DEFAULT_LEAF_LIFETIME, value: "${CA_DEFAULT_LEAF_LIFETIME}"}
+            - {name: CA_MIN_LEAF_LIFETIME, value: "${CA_MIN_LEAF_LIFETIME}"}
+            - {name: CA_MAX_LEAF_LIFETIME, value: "${CA_MAX_LEAF_LIFETIME}"}
+            - {name: ALLOWED_DNS_SUFFIXES, value: ".${XAPP_NAMESPACE}.svc.${CLUSTER_DOMAIN},.${XAPP_NAMESPACE}.svc"}
+          volumeMounts:
+            - {name: server-tls, mountPath: /etc/ric-ca/server, readOnly: true}
+            - {name: issuer, mountPath: /etc/ric-ca/issuer, readOnly: true}
+            - {name: issuer-pq, mountPath: /etc/ric-ca/issuer-pq, readOnly: true}
+            - {name: trust, mountPath: /etc/ric-trust, readOnly: true}
+            - {name: state, mountPath: /var/lib/ric-ca}
+          readinessProbe:
+            httpGet: {path: /healthz, port: https, scheme: HTTPS}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 20m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      volumes:
+        - name: server-tls
+          secret: {secretName: ric-ca-server-tls, defaultMode: 0440}
+        - name: issuer
+          secret: {secretName: ric-ca-issuer, defaultMode: 0440}
+        - name: issuer-pq
+          secret: {secretName: ric-ca-issuer-pq, defaultMode: 0440}
+        - name: trust
+          configMap: {name: ric-trust}
+        - name: state
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${RIC_CA_SERVICE}
+  namespace: ${RICSEC_NAMESPACE}
+  labels: {app: ${RIC_CA_SERVICE}, part-of: xapp-token-binding}
+spec:
+  selector: {app: ${RIC_CA_SERVICE}}
+  ports:
+    - {name: https, port: ${RIC_CA_PORT}, targetPort: https}

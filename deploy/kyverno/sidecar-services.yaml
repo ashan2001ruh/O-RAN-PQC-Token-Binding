@@ -1,0 +1,27 @@
+# One Service per onboarded xApp, pointing at the injected sidecar rather than at the
+# application. It selects on the label the Kyverno policy adds, so it works whatever
+# the onboarding chart names the pod, and it publishes only the tunnel port: the
+# application ports are never exposed outside the pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${SIDECAR_C_CLIENT_ID}-sidecar
+  namespace: ${XAPP_NAMESPACE}
+  labels: {part-of: xapp-token-binding}
+spec:
+  selector:
+    pq.oran/sidecar: ${SIDECAR_C_CLIENT_ID}
+  ports:
+    - {name: pq-tunnel, port: ${SIDECAR_PORT}, targetPort: pq-tunnel}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${SIDECAR_D_CLIENT_ID}-sidecar
+  namespace: ${XAPP_NAMESPACE}
+  labels: {part-of: xapp-token-binding}
+spec:
+  selector:
+    pq.oran/sidecar: ${SIDECAR_D_CLIENT_ID}
+  ports:
+    - {name: pq-tunnel, port: ${SIDECAR_PORT}, targetPort: pq-tunnel}
