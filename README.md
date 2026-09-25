@@ -108,10 +108,10 @@ sequenceDiagram
   X->>CA: mTLS(bootstrap cert) POST /v1/enroll?lifetime=168h  [CSR]
   CA-->>X: leaf CN=xapp-longterm (7 days) + chain
   X->>KC: mTLS(leaf) POST /token grant_type=client_credentials
-  KC-->>X: access_token { cnf: { x5t#S256: SHA-256(leaf) } }
-  Note over X: verify cnf.x5t#S256 == thumbprint(leaf); cache until exp
-  X->>R: mTLS(leaf) GET /api/v1/sdl/key  Authorization: Bearer <token>
-  Note over R: verify JWS (alg from header, key from JWKS), exp/nbf/iss/aud, scope+role;<br/>verify peer chain to RIC CA; SHA-256(peer DER) == cnf.x5t#S256
+  KC-->>X: access_token { cnf: { x5t#35;S256: SHA-256(leaf) } }
+  Note over X: verify cnf.x5t#35;S256 == thumbprint(leaf), then cache until exp
+  X->>R: mTLS(leaf) GET /api/v1/sdl/key  Authorization: Bearer (token)
+  Note over R: verify JWS (alg from header, key from JWKS), exp/nbf/iss/aud, scope+role<br/>verify peer chain to RIC CA<br/>SHA-256(peer DER) == cnf.x5t#35;S256
   R-->>X: 200
 ```
 
@@ -126,7 +126,7 @@ sequenceDiagram
   X->>CA: mTLS(bootstrap) POST /v1/enroll?lifetime=15m  [CSR key k1]
   CA-->>X: leaf1 (15 min)
   X->>KC: mTLS(leaf1) client_credentials
-  KC-->>X: token1 { cnf.x5t#S256 = SHA-256(leaf1) }
+  KC-->>X: token1 { cnf.x5t#35;S256 = SHA-256(leaf1) }
   X->>R: mTLS(leaf1) Bearer token1
   R-->>X: 200
   Note over X: certificate reaches its renewal window (20% lifetime left)<br/>rotation is driven by certificate expiry, not token expiry
@@ -134,7 +134,7 @@ sequenceDiagram
   CA-->>X: leaf2
   Note over X: drop token1 and pooled connections (they carry leaf1)
   X->>KC: mTLS(leaf2) client_credentials
-  KC-->>X: token2 { cnf.x5t#S256 = SHA-256(leaf2) }
+  KC-->>X: token2 { cnf.x5t#35;S256 = SHA-256(leaf2) }
   X->>R: mTLS(leaf2) Bearer token2
   R-->>X: 200
 ```
@@ -148,11 +148,11 @@ sequenceDiagram
   participant X as xApp (client)
   participant KC as Keycloak
   participant R as Resource xApp
-  Note over X: generate DPoP key (ES256); jkt = RFC 7638 thumbprint
-  X->>KC: mTLS POST /token  DPoP: proof{htm=POST, htu=token endpoint, jti, iat; jwk in header}
+  Note over X: generate DPoP key (ES256), jkt = RFC 7638 thumbprint
+  X->>KC: mTLS POST /token  DPoP: proof{htm=POST, htu=token endpoint, jti, iat, jwk in header}
   KC-->>X: token_type=DPoP, access_token { cnf: { jkt } }
   Note over X: verify cnf.jkt == own jkt
-  X->>R: GET /api/v1/sdl/key  Authorization: DPoP <token>  DPoP: proof{htm, htu, jti, iat, ath=SHA-256(token)}
+  X->>R: GET /api/v1/sdl/key  Authorization: DPoP (token)  DPoP: proof{htm, htu, jti, iat, ath=SHA-256(token)}
   Note over R: 1 token valid (JWS/JWKS or introspection) 2 proof signature with its own jwk<br/>3 thumbprint(jwk) == cnf.jkt 4 ath == SHA-256(token)<br/>5 htm/htu match request, iat in window, jti unseen (replay cache with TTL)
   R-->>X: 200
 ```
